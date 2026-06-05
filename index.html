@@ -301,7 +301,7 @@
     </div>
 
     <div class="card">
-        <h2>🔌 Подключаемые Подсистемы </h2>
+        <h2>🔌 Подключаемые Подсистемы (плагины) </h2>
         <div class="subsystems-list" id="subsystemsContainer"></div>
         <div class="note">
             💡 <strong>Правило:</strong> если подсистема требует больше ресурсов, чем Платформа — итоговые требования повышаются.<br>
@@ -338,7 +338,7 @@
                     <table class="result-table" id="clientLinuxTable">
                         <thead><tr><th>Параметр</th><th>Требования</th></tr></thead>
                         <tbody></tbody>
-                    </table>
+                    <tr>
                 </div>
                 <div class="note">Клиентские требования не зависят от нагрузки и одинаковы для всех версий Платформы.<br>Для браузеров необходима поддержка JavaScript, cookies, всплывающих окон. Используйте последние стабильные версии.</div>
             </div>
@@ -397,7 +397,6 @@
         }
     };
 
-    // Клиентские требования (одинаковы для всех версий)
     const baseClientWindows = {
         cpu_freq_ghz: 2.0,
         ram_gb: 4,
@@ -414,7 +413,6 @@
         browsers: "Google Chrome, Mozilla Firefox, Microsoft Edge, Opera, Яндекс.Браузер (последние стабильные версии)"
     };
 
-    // ---------- ПОДСИСТЕМЫ ----------
     const subsystemsCatalog = [
         { 
             id: "bank_docs", 
@@ -569,7 +567,6 @@
 
     let selectedSubsystems = new Set();
 
-    // Функция форматирования отличий подсистем от базовых требований ТЕКУЩЕЙ версии платформы
     function formatHumanReadableDiff(subReqs, platformVersion) {
         const baseReqs = platformReqs[platformVersion];
         if (!baseReqs) return "неизвестная версия";
@@ -609,7 +606,6 @@
         });
     }
 
-    // При смене версии платформы перерисовываем список подсистем (чтобы обновились отличия)
     platformSelect.addEventListener('change', () => {
         renderSubsystems();
         calculateWithoutScroll();
@@ -630,8 +626,16 @@
         return result;
     }
 
+    // Улучшенная формула дискового пространства (кусочно-линейная)
     function calcDiskSpace(baseDiskGb, docsMillion) {
-        let additional = docsMillion * 1.5;
+        let additional;
+        if (docsMillion <= 3) {
+            additional = docsMillion * 1.5;
+        } else if (docsMillion <= 10) {
+            additional = 3 * 1.5 + (docsMillion - 3) * 1.2;   // до 3 млн: 4.5 ГБ, далее по 1.2
+        } else {
+            additional = 3 * 1.5 + 7 * 1.2 + (docsMillion - 10) * 1.0 + 20; // +20 ГБ запаса для крупных БД
+        }
         let total = baseDiskGb + additional;
         return Math.ceil(total);
     }
@@ -728,6 +732,7 @@
         }
     }
 
+    // Главная функция расчета с улучшениями
     function performCalculation(doScroll = false) {
         const platformVer = platformSelect.value;
         const deployMode = deployModeSelect.value;
@@ -736,7 +741,6 @@
         const isVirtual = virtualizationSelect.value === 'virtual';
         const selectedOs = serverOsSelect.value;
 
-        // Базовые требования для выбранной версии
         let baseServer = { ...platformReqs[platformVer] };
         let baseClientWin = { ...baseClientWindows };
         let baseClientLin = { ...baseClientLinux };
@@ -750,6 +754,7 @@
         const selectedSubsArray = Array.from(selectedSubsystems);
         let serverReqs = aggregateServerReqs(baseServer, selectedSubsArray);
 
+        // Масштабирование ОЗУ по документам (старая формула)
         let extraRamByDocs = 0;
         if (docsMillion > SCALING.baseDocsMillion) {
             const over = docsMillion - SCALING.baseDocsMillion;
@@ -757,28 +762,65 @@
             extraRamByDocs = steps * SCALING.ramPerExtra3MillionGB;
         }
         let finalRamMin = serverReqs.ram_gb + extraRamByDocs;
+
+        // ---------- УЛУЧШЕНИЕ 1: Коэффициент запаса при большом количестве подсистем ----------
+        let subsystemCount = selectedSubsArray.length;
+        let subsystemRamMultiplier = 1.0;
+        let subsystemDiskMultiplier = 1.0;
+        if (subsystemCount >= 5) {
+            subsystemRamMultiplier = 1.15;   // +15% к RAM
+            subsystemDiskMultiplier = 1.10;  // +10% к диску
+        }
+        finalRamMin = Math.ceil(finalRamMin * subsystemRamMultiplier);
         
-        let userOverloadWarning = false;
-        if (userCount > SCALING.userWarningThreshold) userOverloadWarning = true;
+        // ---------- УЛУЧШЕНИЕ 2: Уточнённая формула диска уже в calcDiskSpace ----------
+        let diskMin = calcDiskSpace(baseServer.disk_free_gb_base, docsMillion);
+        diskMin = Math.ceil(diskMin * subsystemDiskMultiplier); // применяем запас
         
-        let recommendedServer = { ...serverReqs };
-        recommendedServer.ram_gb = finalRamMin;
-        if (userOverloadWarning) {
-            recommendedServer.cpu_cores = Math.max(recommendedServer.cpu_cores, 8);
-            recommendedServer.cpu_freq_ghz = Math.max(recommendedServer.cpu_freq_ghz, 3.0);
-            recommendedServer.ram_gb = finalRamMin + 6;
-        } else {
-            if (docsMillion > SCALING.baseDocsMillion + 3) {
-                recommendedServer.ram_gb = finalRamMin + 2;
+        const diskRecommended = diskMin + 30; // рекомендуемый +30 ГБ
+
+        // ---------- УЛУЧШЕНИЕ 3: Градации пользователей (вместо одного порога) ----------
+        let userTier = 0; // 0 - до 300, 1 - 300-500, 2 - 500-1000, 3 - >1000
+        let ramUserMultiplier = 1.0;
+        let extraCores = 0;
+        let userWarningMessage = "";
+        if (userCount > 300) {
+            if (userCount <= 500) {
+                userTier = 1;
+                ramUserMultiplier = 1.2;
+                extraCores = 2;
+                userWarningMessage = `Количество пользователей (${userCount}) в диапазоне 300-500. Рекомендуется увеличить RAM на 20% и добавить ${extraCores} ядра CPU.`;
+            } else if (userCount <= 1000) {
+                userTier = 2;
+                ramUserMultiplier = 1.5;
+                extraCores = 4;
+                userWarningMessage = `Количество пользователей (${userCount}) в диапазоне 500-1000. Рекомендуется увеличить RAM на 50% и добавить ${extraCores} ядра CPU.`;
+            } else {
+                userTier = 3;
+                ramUserMultiplier = 2.0;
+                extraCores = 8;
+                userWarningMessage = `Количество пользователей (${userCount}) превышает 1000. Рекомендуется увеличить RAM в 2 раза и добавить ${extraCores} ядер CPU. Обязательна консультация с сервисным инженером.`;
             }
         }
         
-        const diskMin = calcDiskSpace(baseServer.disk_free_gb_base, docsMillion);
-        const diskRecommended = diskMin + 30;
+        // Применяем множитель RAM от пользователей (после запаса по подсистемам)
+        finalRamMin = Math.ceil(finalRamMin * ramUserMultiplier);
+        
+        let recommendedServer = { ...serverReqs };
+        recommendedServer.ram_gb = finalRamMin;
+        recommendedServer.cpu_cores = serverReqs.cpu_cores + extraCores;
+        // Частота тоже может быть повышена для тяжёлых случаев
+        if (userTier >= 2) {
+            recommendedServer.cpu_freq_ghz = Math.max(recommendedServer.cpu_freq_ghz, 3.0);
+        }
+        if (userTier >= 3) {
+            recommendedServer.cpu_freq_ghz = Math.max(recommendedServer.cpu_freq_ghz, 3.5);
+        }
+        
         const osCheck = checkOsCompatibility(selectedOs);
         
         let warningsList = [];
-        if (userOverloadWarning) warningsList.push(`👥 Количество пользователей (${userCount}) превышает порог ${SCALING.userWarningThreshold}. Рекомендуется масштабирование: дополнительные ядра CPU, ОЗУ, консультация с инженером.`);
+        if (userTier > 0) warningsList.push(`👥 ${userWarningMessage}`);
         if (docsMillion > SCALING.baseDocsMillion) {
             warningsList.push(`📚 Объем документов ${docsMillion} млн (>${SCALING.baseDocsMillion} млн). Автоматически добавлено +${extraRamByDocs} ГБ ОЗУ к минимальным требованиям (правило: +4 ГБ на каждые 3 млн док.).`);
         }
@@ -795,6 +837,11 @@
         }
         if (selectedSubsystems.has("kassist4") && selectedOs.startsWith("win")) {
             warningsList.push("⚠️ Подсистема «кАссист 4» на сервере может работать под Windows, но клиентская часть ориентирована только на Linux. Убедитесь в совместимости.");
+        }
+        
+        // Дополнительное предупреждение о большом количестве подсистем
+        if (subsystemCount >= 5) {
+            warningsList.push(`🔧 Выбрано ${subsystemCount} подсистем. Применён коэффициент запаса: RAM +15%, диск +10% к минимальным требованиям.`);
         }
         
         renderServerTable(serverReqs, finalRamMin, diskMin, recommendedServer, diskRecommended, isVirtual);
@@ -820,8 +867,8 @@
         
         scalingNoteDiv.innerHTML = `
             <strong>📐 Примечания по расчету:</strong><br>
-            • Базовые требования сервера (минимальные): ${serverReqs.cpu_cores} ядер / ${serverReqs.cpu_freq_ghz} ГГц, ОЗУ ${serverReqs.ram_gb} ГБ (до масштабирования по документам).<br>
-            • Диск: минимальный свободный объем ${diskMin} ГБ (база 50 ГБ + 1.5×${docsMillion} млн док.). Рекомендуется SSD.<br>
+            • Базовые требования сервера (минимальные): ${serverReqs.cpu_cores} ядер / ${serverReqs.cpu_freq_ghz} ГГц, ОЗУ ${serverReqs.ram_gb} ГБ (до масштабирования по документам и пользователям).<br>
+            • Диск: минимальный свободный объем ${diskMin} ГБ (с учётом запаса). Рекомендуется SSD.<br>
             • ${deployMode === 'reference' ? 'Режим "Только Справочная система" понижает базовые требования (ОЗУ 8 ГБ, 2 ядра).' : 'Полный контур СУНТД — штатные требования 16 ГБ/4 ядра.'}<br>
             • Для корректной работы обязательно соблюдать настройки энергопотребления (BIOS/ОС) и при виртуализации размещать БД локально.
         `;
