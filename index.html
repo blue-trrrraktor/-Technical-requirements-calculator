@@ -265,7 +265,7 @@
                 </select>
             </div>
             <div class="input-group">
-                <label>🧑‍ Количество потенциальных пользователей</label>
+                <label>🧑‍ Количество одновременных пользователей</label>
                 <input type="number" id="userCount" value="150" step="1" min="1">
             </div>
             <div class="input-group">
@@ -301,7 +301,7 @@
     </div>
 
     <div class="card">
-        <h2>🔌 Подключаемые Подсистемы </h2>
+        <h2>🔌 Подключаемые Подсистемы (плагины) </h2>
         <div class="subsystems-list" id="subsystemsContainer"></div>
         <div class="note">
             💡 <strong>Правило:</strong> если подсистема требует больше ресурсов, чем Платформа — итоговые требования повышаются.<br>
@@ -354,7 +354,7 @@
         </div>
         
         <div id="scalingNote" class="note"></div>
-        <button id="exportBtn" style="background: #4b5563; margin-top: 1rem;">Копировать сводку</button>
+        <button id="exportBtn" style="background: #4b5563; margin-top: 1rem;">📎 Копировать сводку</button>
     </div>
     <footer>
         ⚡ Калькулятор основан на утвержденных технических требованиях к Платформе, подсистемам и правилам масштабирования.<br>
@@ -363,23 +363,42 @@
 </div>
 
 <script>
-    // ---------- БАЗОВЫЕ ТРЕБОВАНИЯ ----------
-    const baseServerReqs = {
-        cpu_cores: 4,
-        cpu_freq_ghz: 2.7,
-        ram_gb: 16,
-        disk_free_gb_base: 50,
-        network_gbit: 1,
-        bios_power_setting: true,
-        os_windows: ["Server 2012","Server 2016","Server 2019","Server 2022","Server 2025"],
-        os_linux_compatible: [
-            "Astra Linux Special Edition 1.6+","Astra Linux Common Edition 2.12+",
-            "Альт СП Сервер 10+","Альт Сервер 10+","РЕД ОС 7.3+","ОС Атлант сборка Alcyone",
-            "AlterOS 7.5+","ядро 3.0+ (прочие дистрибутивы)"
-        ],
-        power_plan_recommended: "Высокая производительность"
+    // ---------- БАЗОВЫЕ ТРЕБОВАНИЯ ПО ВЕРСИЯМ ПЛАТФОРМЫ ----------
+    const platformReqs = {
+        "6.4.5": {
+            cpu_cores: 4,
+            cpu_freq_ghz: 2.7,
+            ram_gb: 16,
+            disk_free_gb_base: 50,
+            network_gbit: 1,
+            bios_power_setting: true,
+            os_windows: ["Server 2012","Server 2016","Server 2019","Server 2022","Server 2025"],
+            os_linux_compatible: [
+                "Astra Linux Special Edition 1.6+","Astra Linux Common Edition 2.12+",
+                "Альт СП Сервер 10+","Альт Сервер 10+","РЕД ОС 7.3+","ОС Атлант сборка Alcyone",
+                "AlterOS 7.5+","ядро 3.0+ (прочие дистрибутивы)"
+            ],
+            power_plan_recommended: "Высокая производительность"
+        },
+        "6.4.6": {
+            // ПОКА ТРЕБОВАНИЯ ТАКИЕ ЖЕ, КАК ДЛЯ 6.4.5. В БУДУЩЕМ ИЗМЕНИТЕ ЭТОТ БЛОК.
+            cpu_cores: 4,
+            cpu_freq_ghz: 2.7,
+            ram_gb: 16,
+            disk_free_gb_base: 50,
+            network_gbit: 1,
+            bios_power_setting: true,
+            os_windows: ["Server 2012","Server 2016","Server 2019","Server 2022","Server 2025"],
+            os_linux_compatible: [
+                "Astra Linux Special Edition 1.6+","Astra Linux Common Edition 2.12+",
+                "Альт СП Сервер 10+","Альт Сервер 10+","РЕД ОС 7.3+","ОС Атлант сборка Alcyone",
+                "AlterOS 7.5+","ядро 3.0+ (прочие дистрибутивы)"
+            ],
+            power_plan_recommended: "Высокая производительность"
+        }
     };
 
+    // Клиентские требования (одинаковы для всех версий)
     const baseClientWindows = {
         cpu_freq_ghz: 2.0,
         ram_gb: 4,
@@ -551,7 +570,10 @@
 
     let selectedSubsystems = new Set();
 
-    function formatHumanReadableDiff(subReqs, baseReqs) {
+    // Функция форматирования отличий подсистем от базовых требований ТЕКУЩЕЙ версии платформы
+    function formatHumanReadableDiff(subReqs, platformVersion) {
+        const baseReqs = platformReqs[platformVersion];
+        if (!baseReqs) return "неизвестная версия";
         const parts = [];
         if (subReqs.ram_gb !== undefined && subReqs.ram_gb !== baseReqs.ram_gb)
             parts.push(`${subReqs.ram_gb} ГБ ОЗУ`);
@@ -565,6 +587,7 @@
 
     function renderSubsystems() {
         subsystemsContainer.innerHTML = '';
+        const currentVersion = platformSelect.value;
         subsystemsCatalog.forEach(sub => {
             const wrapper = document.createElement('div');
             wrapper.className = 'subsystem-item';
@@ -575,18 +598,23 @@
             cb.addEventListener('change', (e) => {
                 if (e.target.checked) selectedSubsystems.add(sub.id);
                 else selectedSubsystems.delete(sub.id);
-                // Пересчитываем без прокрутки
                 calculateWithoutScroll();
             });
             const label = document.createElement('label');
             label.htmlFor = `sub_${sub.id}`;
-            const readableDiff = formatHumanReadableDiff(sub.requirements.server, baseServerReqs);
+            const readableDiff = formatHumanReadableDiff(sub.requirements.server, currentVersion);
             label.innerHTML = `${sub.name} <span style="font-size:0.7rem; color:#4b5563;">(требует: ${readableDiff})</span>`;
             wrapper.appendChild(cb);
             wrapper.appendChild(label);
             subsystemsContainer.appendChild(wrapper);
         });
     }
+
+    // При смене версии платформы перерисовываем список подсистем (чтобы обновились отличия)
+    platformSelect.addEventListener('change', () => {
+        renderSubsystems();
+        calculateWithoutScroll();
+    });
 
     function aggregateServerReqs(baseReqs, selectedSubsList) {
         let result = { ...baseReqs };
@@ -701,15 +729,16 @@
         }
     }
 
-    // Основная логика расчёта (без автоматического скролла)
     function performCalculation(doScroll = false) {
+        const platformVer = platformSelect.value;
         const deployMode = deployModeSelect.value;
         let userCount = parseInt(userCountInput.value, 10) || 0;
         let docsMillion = parseFloat(docCountInput.value) || 0;
         const isVirtual = virtualizationSelect.value === 'virtual';
         const selectedOs = serverOsSelect.value;
 
-        let baseServer = { ...baseServerReqs };
+        // Базовые требования для выбранной версии
+        let baseServer = { ...platformReqs[platformVer] };
         let baseClientWin = { ...baseClientWindows };
         let baseClientLin = { ...baseClientLinux };
 
@@ -853,7 +882,6 @@
     calcBtn.addEventListener('click', calculateWithScroll);
     document.getElementById('exportBtn').addEventListener('click', exportSummary);
     subsystemsDetailsHeader.addEventListener('click', toggleSubsystemsDetails);
-    // Первоначальный расчёт без скролла
     setTimeout(() => calculateWithoutScroll(), 100);
 </script>
 </body>
