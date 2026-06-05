@@ -315,6 +315,8 @@
 
     <div class="card result-section" id="resultPanel" style="display: none;">
         <h2>📋 Результат расчета</h2>
+        
+        <!-- Серверная и клиентские части в две колонки -->
         <div class="two-cols">
             <div class="col">
                 <h3>🖥️ Серверная часть</h3>
@@ -338,13 +340,16 @@
                     <table class="result-table" id="clientLinuxTable">
                         <thead><tr><th>Параметр</th><th>Требования</th></tr></thead>
                         <tbody></tbody>
-                    <tr>
+                    </table>
                 </div>
                 <div class="note">Клиентские требования не зависят от нагрузки и одинаковы для всех версий Платформы.<br>Для браузеров необходима поддержка JavaScript, cookies, всплывающих окон. Используйте последние стабильные версии.</div>
             </div>
         </div>
+        
+        <!-- Область глобальных предупреждений (после обеих клиентских таблиц) -->
         <div id="warningsArea" style="margin-top: 1.5rem; background: #fff7e6; padding: 1rem; border-radius: 20px;"></div>
         
+        <!-- Сворачиваемый блок дополнительных требований подсистем -->
         <div id="subsystemsDetailsBlock" class="subsystems-details" style="display: none;">
             <div class="subsystems-details-header" id="subsystemsDetailsHeader">
                 <span>📌 Дополнительные требования выбранных подсистем</span>
@@ -353,9 +358,11 @@
             <div class="subsystems-details-content" id="subsystemsDetailsContent"></div>
         </div>
         
+        <!-- Примечания по расчёту и кнопка копирования -->
         <div id="scalingNote" class="note"></div>
         <button id="exportBtn" style="background: #4b5563; margin-top: 1rem;">📎 Копировать сводку</button>
     </div>
+    
     <footer>
         ⚡ Калькулятор основан на утвержденных технических требованиях к Платформе, подсистемам и правилам масштабирования.<br>
         При виртуализации строго соблюдать настройки энергопотребления (BIOS/хоста/гостя) и размещать тома БД на локальном виртуальном диске (не по сети).
@@ -626,15 +633,14 @@
         return result;
     }
 
-    // Улучшенная формула дискового пространства (кусочно-линейная)
     function calcDiskSpace(baseDiskGb, docsMillion) {
         let additional;
         if (docsMillion <= 3) {
             additional = docsMillion * 1.5;
         } else if (docsMillion <= 10) {
-            additional = 3 * 1.5 + (docsMillion - 3) * 1.2;   // до 3 млн: 4.5 ГБ, далее по 1.2
+            additional = 3 * 1.5 + (docsMillion - 3) * 1.2;
         } else {
-            additional = 3 * 1.5 + 7 * 1.2 + (docsMillion - 10) * 1.0 + 20; // +20 ГБ запаса для крупных БД
+            additional = 3 * 1.5 + 7 * 1.2 + (docsMillion - 10) * 1.0 + 20;
         }
         let total = baseDiskGb + additional;
         return Math.ceil(total);
@@ -732,7 +738,6 @@
         }
     }
 
-    // Главная функция расчета с улучшениями
     function performCalculation(doScroll = false) {
         const platformVer = platformSelect.value;
         const deployMode = deployModeSelect.value;
@@ -754,7 +759,6 @@
         const selectedSubsArray = Array.from(selectedSubsystems);
         let serverReqs = aggregateServerReqs(baseServer, selectedSubsArray);
 
-        // Масштабирование ОЗУ по документам (старая формула)
         let extraRamByDocs = 0;
         if (docsMillion > SCALING.baseDocsMillion) {
             const over = docsMillion - SCALING.baseDocsMillion;
@@ -763,24 +767,22 @@
         }
         let finalRamMin = serverReqs.ram_gb + extraRamByDocs;
 
-        // ---------- УЛУЧШЕНИЕ 1: Коэффициент запаса при большом количестве подсистем ----------
+        // Коэффициент запаса при большом количестве подсистем
         let subsystemCount = selectedSubsArray.length;
         let subsystemRamMultiplier = 1.0;
         let subsystemDiskMultiplier = 1.0;
         if (subsystemCount >= 5) {
-            subsystemRamMultiplier = 1.15;   // +15% к RAM
-            subsystemDiskMultiplier = 1.10;  // +10% к диску
+            subsystemRamMultiplier = 1.15;
+            subsystemDiskMultiplier = 1.10;
         }
         finalRamMin = Math.ceil(finalRamMin * subsystemRamMultiplier);
         
-        // ---------- УЛУЧШЕНИЕ 2: Уточнённая формула диска уже в calcDiskSpace ----------
         let diskMin = calcDiskSpace(baseServer.disk_free_gb_base, docsMillion);
-        diskMin = Math.ceil(diskMin * subsystemDiskMultiplier); // применяем запас
-        
-        const diskRecommended = diskMin + 30; // рекомендуемый +30 ГБ
+        diskMin = Math.ceil(diskMin * subsystemDiskMultiplier);
+        const diskRecommended = diskMin + 30;
 
-        // ---------- УЛУЧШЕНИЕ 3: Градации пользователей (вместо одного порога) ----------
-        let userTier = 0; // 0 - до 300, 1 - 300-500, 2 - 500-1000, 3 - >1000
+        // Градации пользователей
+        let userTier = 0;
         let ramUserMultiplier = 1.0;
         let extraCores = 0;
         let userWarningMessage = "";
@@ -803,13 +805,11 @@
             }
         }
         
-        // Применяем множитель RAM от пользователей (после запаса по подсистемам)
         finalRamMin = Math.ceil(finalRamMin * ramUserMultiplier);
         
         let recommendedServer = { ...serverReqs };
         recommendedServer.ram_gb = finalRamMin;
         recommendedServer.cpu_cores = serverReqs.cpu_cores + extraCores;
-        // Частота тоже может быть повышена для тяжёлых случаев
         if (userTier >= 2) {
             recommendedServer.cpu_freq_ghz = Math.max(recommendedServer.cpu_freq_ghz, 3.0);
         }
@@ -839,7 +839,6 @@
             warningsList.push("⚠️ Подсистема «кАссист 4» на сервере может работать под Windows, но клиентская часть ориентирована только на Linux. Убедитесь в совместимости.");
         }
         
-        // Дополнительное предупреждение о большом количестве подсистем
         if (subsystemCount >= 5) {
             warningsList.push(`🔧 Выбрано ${subsystemCount} подсистем. Применён коэффициент запаса: RAM +15%, диск +10% к минимальным требованиям.`);
         }
